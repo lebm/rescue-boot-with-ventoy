@@ -926,3 +926,87 @@ Com isso eu te devolvo:
 *   exemplo de comando para gerar **UKI para linux + linux-zen + linux-lts**
 *   e o **hook do pacman** para rebuild automático de UKI (incluindo `intel-ucode` e `systemd` como triggers), alinhado com sua estratégia de coexistência GRUB → systemd‑boot. [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/), [\[wiki.gentoo.org\]](https://wiki.gentoo.org/wiki/Unified_Kernel_Image), [\[systemd.io\]](https://systemd.io/BOOT/)
 
+**Prompt [Entendo que, com a configuração proposta, o... | Experimente no Copilot Chat](https://m365.cloud.microsoft/chat/entity1-d870f6cd-4aa5-4d42-9626-ab690c041429/eyJpZCI6IlZYTmxjbFl4ZkdoMGRIQnpPaTh2YzNWaWMzUnlZWFJsTFdsdWRDNXZabVpwWTJVdVkyOXRMM3hQU1VRNk5URXpObVkyWWpJdE1HWTVOUzAwWkRVM0xXRmtZVEV0T0dVeE1UZzNaVE01TkRnNWZHUXdZVE0xWVdJMkxUSmlNV1V0TkdSak15MWlNMkUzTFdabVlqbGlPREEwWlRjeVpYd3lNREkyTFRBMExUQTVWREU0T2pVeE9qSXdMalEwTURnNU16WmEiLCJzY2VuYXJpbyI6InNoYXJlTGlua1ZpYVJpY2hDb3B5IiwicHJvcGVydGllcyI6eyJwcm9tcHRTb3VyY2UiOiJ1c2VyIiwiY2xpY2tUaW1lc3RhbXAiOiIyMDI2LTA0LTA5VDE4OjUxOjIwLjUzOVoifSwiY2hhdFR5cGUiOiJ3ZWIiLCJ2ZXJzaW9uIjoxLjF9)**
+
+```
+Entendo que, com a configuração proposta, o comando "dracut --force --kver $(uname -r)" vai gerar a imagem .efi  para o kernel corrente, no local correto, e incluindo o kernel, o initrd e a cmdline. Ele inclui automaticamente o arquivo microcode do intel-ucode? Ou é necessário informar isso na configuração/linha de comando?
+```
+
+**Resposta**
+Você está **quase** certo — só um ajuste importante:
+
+*   `dracut --force --kver $(uname -r)` **por si só** tende a gerar **apenas um initramfs “normal”** (no local padrão da distro/pacote), **não necessariamente um UKI `.efi`**, a menos que você esteja usando `--uefi` **ou** tenha `uefi="yes"` na configuração e esteja gerando para um **arquivo `.efi`**. [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/), [\[edu4rdshl.dev\]](https://edu4rdshl.dev/posts/uki-secure-boot-on-archlinux-systemd-boot-walkthrough/)
+*   Para produzir um **UKI de verdade**, o ArchWiki do dracut é bem direto: *“dracut can produce unified kernel images with the `--uefi` command line option or with the `uefi="yes"` configuration option.”* [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/)
+
+Dito isso, vamos à sua pergunta central:
+
+## Microcode (intel-ucode): dracut embute automaticamente?
+
+✅ **Sim — se o microcode estiver instalado, o dracut embute automaticamente nas imagens que ele gera.**  
+O próprio ArchWiki do dracut diz: *“The files created through these commands embed any installed Microcode images.”* [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/)
+
+Ou seja:
+
+*   Se você tiver `intel-ucode` instalado, o dracut **não precisa** que você aponte explicitamente `intel-ucode.img` na linha de comando para ele ser incluído. [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/)
+
+***
+
+## Então qual é o “comando correto” para gerar o `.efi` no local certo?
+
+Para UKI, eu recomendo ser explícito (menos ambiguidade):
+
+```bash
+sudo mkdir -p /boot/EFI/Linux
+sudo dracut --force --uefi "/boot/EFI/Linux/arch-linux-$(uname -r).efi" "$(uname -r)"
+```
+
+Isso garante:
+
+*   saída `.efi` em `/boot/EFI/Linux/…` (layout que o systemd-boot autodetecta) [\[wiki.gentoo.org\]](https://wiki.gentoo.org/wiki/Unified_Kernel_Image), [\[systemd.io\]](https://systemd.io/BOOT/)
+*   que você está realmente pedindo **modo UKI/UEFI** (`--uefi`) [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/)
+
+> Observação: o systemd‑boot autodetecta UKIs em `/EFI/Linux/*.efi` (no ESP e também no XBOOTLDR) sem precisar de `/loader/entries`. [\[wiki.gentoo.org\]](https://wiki.gentoo.org/wiki/Unified_Kernel_Image), [\[kernel.org\]](https://www.kernel.org/pub/linux/utils/boot/dracut/dracut.html), [\[systemd.io\]](https://systemd.io/BOOT/)
+
+***
+
+## E a cmdline? Ela entra “automaticamente”?
+
+A cmdline **só entra automaticamente** se você **configurar** isso para o dracut.
+
+No dracut, a forma suportada/documentada é definir `kernel_cmdline="..."` em `/etc/dracut.conf.d/*.conf`. [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/)
+
+Exemplo:
+
+`/etc/dracut.conf.d/cmdline.conf`
+
+```ini
+kernel_cmdline="root=/dev/mapper/vg_root-root ro rootfstype=xfs rd.lvm.lv=vg_root/root quiet"
+```
+
+Sem isso, o UKI pode ficar sem cmdline embutida (e aí você teria que passar opções via bootloader/entrada). O ArchWiki do dracut descreve explicitamente esse mecanismo de `kernel_cmdline`. [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/)
+
+***
+
+## Como eu verifico se o microcode foi realmente embutido?
+
+Use `lsinitrd` (o ArchWiki recomenda para inspecionar o conteúdo gerado):
+
+```bash
+sudo lsinitrd /boot/EFI/Linux/arch-linux-$(uname -r).efi | less
+```
+
+Você deve ver referências ao microcode (Intel) dentro da imagem se o pacote estiver instalado. O `lsinitrd` é a ferramenta sugerida para inspecionar o que foi incluído. [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/)
+
+***
+
+## Resposta direta (sem rodeio)
+
+*   **Microcode Intel (`intel-ucode`)**: **dracut inclui automaticamente** nas imagens que gera, desde que esteja instalado. [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/)
+*   Para garantir que você está gerando um **UKI `.efi`** no caminho que o systemd‑boot autodetecta, use `--uefi` e especifique o arquivo de saída em `/boot/EFI/Linux/*.efi`. [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/), [\[wiki.gentoo.org\]](https://wiki.gentoo.org/wiki/Unified_Kernel_Image), [\[systemd.io\]](https://systemd.io/BOOT/)
+*   Para garantir que a **cmdline** vá dentro do UKI, configure `kernel_cmdline="..."` em `/etc/dracut.conf.d/`. [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/)
+
+***
+
+Se você quiser, eu monto um “modelo final” já considerando seus kernels **linux**, **linux-zen** e (futuro) **linux-lts**, com nomes consistentes e um hook do pacman para rebuild automático — e sem nano, prometo 😄.
+
+
