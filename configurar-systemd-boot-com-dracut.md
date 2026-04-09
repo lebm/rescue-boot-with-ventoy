@@ -1010,7 +1010,11 @@ Você deve ver referências ao microcode (Intel) dentro da imagem se o pacote es
 Se você quiser, eu monto um “modelo final” já considerando seus kernels **linux**, **linux-zen** e (futuro) **linux-lts**, com nomes consistentes e um hook do pacman para rebuild automático — e sem nano, prometo 😄.
 
 **Prompt [Depois que perguntei vi que você já tinha... | Experimente no Copilot Chat](https://m365.cloud.microsoft/chat/entity1-d870f6cd-4aa5-4d42-9626-ab690c041429/eyJpZCI6IlZYTmxjbFl4ZkdoMGRIQnpPaTh2YzNWaWMzUnlZWFJsTFdsdWRDNXZabVpwWTJVdVkyOXRMM3hQU1VRNk5URXpObVkyWWpJdE1HWTVOUzAwWkRVM0xXRmtZVEV0T0dVeE1UZzNaVE01TkRnNWZEQTVOakl6WkdFM0xXUTJOV1F0TkdKbVpTMWlNekprTFRaaFpETmhPR0kxTm1NeE1ud3lNREkyTFRBMExUQTVWREU1T2pBd09qTXlMalUwTURnMk5qVmEiLCJzY2VuYXJpbyI6InNoYXJlTGlua1ZpYVJpY2hDb3B5IiwicHJvcGVydGllcyI6eyJwcm9tcHRTb3VyY2UiOiJ1c2VyIiwiY2xpY2tUaW1lc3RhbXAiOiIyMDI2LTA0LTA5VDE5OjAwOjMyLjY0NloifSwiY2hhdFR5cGUiOiJ3ZWIiLCJ2ZXJzaW9uIjoxLjF9)**
+
+```
 Depois que perguntei vi que você já tinha mencionado isso em "6. Incluir microcode no UKI" usando a opção "early_microcode=yes" no arquivo "/etc/dracut.conf.d/microcode.conf".
+```
+
 **Resposta**
 Boa — você percebeu exatamente o ponto. E vale uma **correção/clareza** importante:
 
