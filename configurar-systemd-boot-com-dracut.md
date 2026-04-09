@@ -456,3 +456,290 @@ bootctl status
 
 eu monto um runbook bem objetivo com **comandos exatos** (incluindo fallback/rollback), no estilo checklist.
 
+**Prompt [Esqueci de comentar que a configuração corrente... | Experimente no Copilot Chat](https://m365.cloud.microsoft/chat/entity1-d870f6cd-4aa5-4d42-9626-ab690c041429/eyJpZCI6IlZYTmxjbFl4ZkdoMGRIQnpPaTh2YzNWaWMzUnlZWFJsTFdsdWRDNXZabVpwWTJVdVkyOXRMM3hQU1VRNk5URXpObVkyWWpJdE1HWTVOUzAwWkRVM0xXRmtZVEV0T0dVeE1UZzNaVE01TkRnNWZEZGxPVEZqTjJJMExXUmlaVGt0TkRnd015MWhZemRpTFRWaVl6VmhPR000WlRFek5Id3lNREkyTFRBMExUQTVWREU0T2pBM09qUTRMak16TlRReE9UVmEiLCJzY2VuYXJpbyI6InNoYXJlTGlua1ZpYVJpY2hDb3B5IiwicHJvcGVydGllcyI6eyJwcm9tcHRTb3VyY2UiOiJ1c2VyIiwiY2xpY2tUaW1lc3RhbXAiOiIyMDI2LTA0LTA5VDE4OjA3OjQ4LjQ1MFoifSwiY2hhdFR5cGUiOiJ3ZWIiLCJ2ZXJzaW9uIjoxLjF9)**
+```
+Esqueci de comentar que a configuração corrente usa GRUB.
+Não uso e por enquanto não vou gerar nenhuma configuração em /loader/entries/.
+Não uso LUKS/dm-crypt.
+O /boot (ESP) é uma partição simples.
+Os demais filesystem estão em volumes LVM usando xfs.
+Não uso btrfs.
+
+Minha dúvida agora é, como fazer o grub usar os arquivos copiados do /boot atual para o novo /boot em partição XBOOTLDR? 
+
+Para evitar essa questão sem precisar que o GRUB acesse a partição XBOOTLDR imaginei os passos abaixo para migrar:
+1) Deixar o grub intocado e já criar, ainda que de forma manual, arquivos em "partição XBOOLTLDR"/EFI/Linux usando dracut. (Como fazer isso?)
+2) Instalar o systemd-boot (bootctl install).
+3) Bootar para teste. A UEFI vai tentar bootar usando os arquivos UKI da partição XBOOTLDR, já que a instalação do systemd-boot o torna o boot loader prioncipal sem remover o grub que continua instalado e disponível na UEFI.
+4) Em caso de problema posso entrar no menu de boot usando F12 para corrigir.
+5) Depois de testar tudo e validar o boot usando os arquivos UKI (/EFI/Linux/*.efi), desintalo mkinitcpio, grub e removo os arquivos desnecessários da partição ESP.
+6) Configuro a geração automárica de imagens UKI em /boot/EFI/Linux/ quando houver atualização de kernel. (Como fazer isso?)
+
+Essa estratégia funciona? Deixei escapar algum detalhe?
+```
+
+**Resposta**
+Sua estratégia **é válida** e, do jeito que você descreveu, ela é justamente o tipo de migração “segura” (testa sem quebrar o boot atual). Só tem alguns **detalhes críticos** para não ser pego de surpresa — principalmente sobre **onde o systemd‑boot vai procurar o UKI**, sobre **como o dracut embute a cmdline**, e sobre um **efeito colateral do `bootctl install`** no ESP.
+
+Vou dividir em:
+
+1.  **GRUB usando o novo XBOOTLDR (se você quisesse)**
+2.  **Estratégia que você propôs (GRUB intocado + UKI no XBOOTLDR + systemd‑boot)** — validação e “pegadinhas”
+3.  **Como gerar UKI manualmente com dracut no XBOOTLDR (sem mexer no GRUB)**
+4.  **Como automatizar a geração do UKI quando o kernel atualizar** (com pacman hook)
+
+***
+
+## 1) “Como fazer o GRUB usar os arquivos copiados do /boot atual para o novo /boot no XBOOTLDR?”
+
+Se o objetivo é **manter GRUB** carregando kernel+initramfs, a forma “normal” de fazê-lo usar o novo armazenamento é: **fazer o `/boot` real virar o XBOOTLDR** (maior) e montar o ESP em outro lugar (ex.: `/efi`). Isso é exatamente o cenário do XBOOTLDR: separar artefatos grandes (kernel/initramfs) do ESP pequeno. [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Systemd-boot), [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/)
+
+Mas como você **explicitamente quer evitar** que o GRUB tenha que acessar o XBOOTLDR (e não quer usar `/loader/entries`), então a melhor resposta prática é:
+
+> **Você não precisa (nem vale a pena) fazer o GRUB “usar” o XBOOTLDR nessa fase.**  
+> Use o GRUB como fallback e valide o UKI com systemd‑boot.
+
+Isso deixa o GRUB “intocado”, do jeito que você quer.
+
+***
+
+## 2) A estratégia que você propôs funciona? (Sim) — mas observe estes detalhes
+
+A lógica geral está correta:
+
+*   `systemd-boot` **pode coexistir** com GRUB: `bootctl install` cria uma entrada UEFI (“Linux Boot Manager”) e normalmente a coloca primeiro na ordem de boot, **sem remover** outras entradas. [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Systemd-boot)
+*   O `systemd-boot` **auto-detecta UKIs** em `/EFI/Linux/*.efi` **no ESP e também no XBOOTLDR**, sem precisar de arquivos em `/loader/entries`. [\[man7.org\]](https://www.man7.org/linux//man-pages/man7/sd-boot.7.html), [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Systemd-boot), [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Unified_kernel_image)
+*   E ele **só consegue iniciar binários EFI** que estejam no **ESP** ou no **XBOOTLDR no mesmo disco**. [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Systemd-boot), [\[man7.org\]](https://www.man7.org/linux//man-pages/man7/sd-boot.7.html), [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/)
+
+### Pegadinhas / detalhes que você não pode deixar escapar
+
+#### (A) Firmware “Fast Boot” pode ignorar o XBOOTLDR
+
+Alguns firmwares, com “fast boot” ativado, **podem pular a leitura de partições além do ESP**, e aí o systemd‑boot pode não encontrar as entradas/UKIs no XBOOTLDR. Solução: desabilitar o fast boot no setup. [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Systemd-boot)
+
+#### (B) `bootctl install` pode sobrescrever o “fallback loader” do ESP
+
+O `bootctl install` copia o systemd‑boot para o ESP e **sobrescreve** `ESP:/EFI/BOOT/BOOTX64.EFI` (ou IA32 equivalente). Isso pode impactar cenários onde algo dependia desse caminho. [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Systemd-boot)
+
+> Não costuma “quebrar o Windows” (porque o Windows usa `EFI/Microsoft/Boot/Bootmgfw.efi`), mas é um efeito colateral real — só esteja ciente.
+
+#### (C) UKI no XBOOTLDR: precisa ser `.efi` e estar em `/EFI/Linux/`
+
+O systemd‑boot só trata como UKI auto-detectável o que estiver em `/EFI/Linux/` com extensão `.efi`. [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Systemd-boot), [\[man7.org\]](https://www.man7.org/linux//man-pages/man7/sd-boot.7.html)
+
+#### (D) Cmdline embutida: dracut usa `kernel_cmdline=...` (não confie que `/etc/kernel/cmdline` será usado)
+
+O ArchWiki do dracut explica que a cmdline pode ser definida em `/etc/dracut.conf.d/*.conf` via `kernel_cmdline=...` e que o dracut a “sourcia” para dentro do initramfs.   
+E, para UKI, você quer **ter certeza** que a cmdline embutida contém pelo menos o `root=...` e (no seu caso) parâmetros úteis para LVM se necessário. [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Dracut)
+
+> (Detalhe relacionado) Quando Secure Boot está ativo, UKIs com `.cmdline` embutida **ignoram** opções passadas pelo bootloader; sem Secure Boot, as opções passadas podem sobrescrever. [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Systemd-boot), [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Unified_kernel_image)
+
+***
+
+## 3) Como fazer o passo (1): gerar UKI “manual” no XBOOTLDR com dracut (sem mexer no GRUB)
+
+A ideia aqui é: **montar o XBOOTLDR em um ponto qualquer (ex.: `/xbootldr`)**, gerar UKIs em `/xbootldr/EFI/Linux/`, instalar systemd‑boot no ESP (onde já está o GRUB), e testar.
+
+### 3.1 Criar/formatar/montar o XBOOTLDR (uma vez)
+
+*   O XBOOTLDR, em GPT, tem GUID **`bc13c2ff-59e6-4262-a352-b275fd6f7172`** e deve ficar **no mesmo disco do ESP**. [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/), [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Systemd-boot)
+*   Em geral, use **VFAT** por compatibilidade com firmware. [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/), [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Systemd-boot)
+
+Exemplo de montagem em runtime (sem tocar no `/boot` do GRUB):
+
+```bash
+mkdir -p /xbootldr
+# adicione no /etc/fstab (exemplo):
+# UUID=xxxx-xxxx  /xbootldr  vfat  noatime,umask=0077  0  2
+mount /xbootldr
+mkdir -p /xbootldr/EFI/Linux
+```
+
+> Esse “/xbootldr” é só para o Linux em runtime escrever arquivos; no boot, o systemd‑boot vai localizar a partição pelo tipo GUID e pelo disco. [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/), [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Systemd-boot), [\[man7.org\]](https://www.man7.org/linux//man-pages/man7/sd-boot.7.html)
+
+### 3.2 Instalar dracut e configurar para UKI
+
+Instale dracut:
+
+```bash
+pacman -S dracut
+```
+
+O dracut pode produzir UKI com `--uefi` ou com `uefi="yes"` na configuração. [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Dracut)
+
+Crie uma config para **cmdline** (importante!):
+
+```bash
+mkdir -p /etc/dracut.conf.d
+nano /etc/dracut.conf.d/cmdline.conf
+```
+
+Exemplo (ajuste para seu VG/LV e root real em XFS/LVM):
+
+```ini
+kernel_cmdline="root=/dev/mapper/<VG>-<LV> rw rootfstype=xfs"
+```
+
+O ArchWiki do dracut documenta exatamente esse mecanismo (`kernel_cmdline=` em `.conf`). [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Dracut)
+
+Agora uma config para gerar UKI (mínima) — o essencial é “ativar uefi” e apontar o stub:
+
+```bash
+nano /etc/dracut.conf.d/uki.conf
+```
+
+Conteúdo sugestivo:
+
+```ini
+uefi="yes"
+hostonly="yes"
+uefi_stub="/usr/lib/systemd/boot/efi/linuxx64.efi.stub"
+```
+
+> O ArchWiki confirma que o dracut gera UKI com `--uefi` ou `uefi="yes"`. [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Dracut)
+
+### 3.3 Gerar UKI manualmente no XBOOTLDR
+
+O `dracut` permite escolher o arquivo de saída e a versão do kernel. Ele gera a imagem e sobrescreve com `--force`. [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Dracut), [\[man7.org\]](https://www.man7.org/linux/man-pages/man8/dracut.8.html)
+
+Para o kernel em execução:
+
+```bash
+kver="$(uname -r)"
+dracut --force --uefi "/xbootldr/EFI/Linux/arch-linux-${kver}.efi" "${kver}"
+```
+
+Depois confira:
+
+```bash
+ls -lh /xbootldr/EFI/Linux/
+```
+
+**Dica de inspeção:** `lsinitrd` funciona para ver o que foi embutido. [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Dracut)
+
+***
+
+## 4) Passos (2)–(5): instalar systemd‑boot, testar, manter rollback com GRUB
+
+### 4.1 Instalar systemd‑boot no ESP (mantendo GRUB)
+
+Rode:
+
+```bash
+bootctl install
+```
+
+Isso instala o systemd‑boot no ESP e cria a entrada UEFI; ele tenta localizar o ESP em `/efi`, `/boot`, `/boot/efi` e coloca a nova entrada no boot order.   
+**Cuidado**: sobrescreve `ESP:/EFI/BOOT/BOOTX64.EFI`. [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Systemd-boot)
+
+### 4.2 Testar boot
+
+No reboot, selecione “Linux Boot Manager” (systemd‑boot).  
+Ele deve listar automaticamente o UKI do XBOOTLDR (`/EFI/Linux/*.efi`) sem nenhum `.conf`. [\[man7.org\]](https://www.man7.org/linux//man-pages/man7/sd-boot.7.html), [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Systemd-boot), [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Unified_kernel_image)
+
+Se falhar, seu rollback é exatamente o que você disse: F12/Boot Menu e escolher GRUB (entrada UEFI antiga continua lá). [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Systemd-boot)
+
+### 4.3 Só depois de validar…
+
+Aí sim faz sentido remover GRUB/mkinitcpio e limpar o ESP — e ainda assim eu manteria **pelo menos um caminho de fallback** (ex.: manter o systemd‑boot atualizado no ESP). A remoção do mkinitcpio é recomendada **após** validar o dracut (o ArchWiki sugere isso explicitamente). [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Dracut)
+
+***
+
+## 5) Passo (6): geração automática de UKI em `/boot/EFI/Linux/` após update de kernel
+
+Você tem duas abordagens:
+
+### Abordagem A (mais simples e controlável): *pacman hook* customizado para UKI
+
+Crie um script que:
+
+1.  garante que o XBOOTLDR esteja montado (por enquanto em `/xbootldr`; depois você pode mudar para `/boot`)
+2.  gera UKIs para kernels instalados (ou pelo menos para o kernel recém-instalado)
+
+**Exemplo de script** `/usr/local/sbin/uki-dracut-build-all`:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+MNT="/xbootldr"                 # depois você troca para /boot quando fizer o cutover
+OUTDIR="${MNT}/EFI/Linux"
+
+mkdir -p "${OUTDIR}"
+
+# Gera para todos os kernels presentes em /usr/lib/modules
+for d in /usr/lib/modules/*; do
+  kver="$(basename "$d")"
+  dracut --force --uefi "${OUTDIR}/arch-linux-${kver}.efi" "${kver}"
+done
+```
+
+> O dracut suporta `--force` e a seleção de versão via argumento de kernel version; e pode gerar UKI com `--uefi`. [\[man7.org\]](https://www.man7.org/linux/man-pages/man8/dracut.8.html), [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Dracut)
+
+Permissões:
+
+```bash
+chmod +x /usr/local/sbin/uki-dracut-build-all
+```
+
+**Hook** `/etc/pacman.d/hooks/95-uki-dracut.hook`:
+
+```ini
+[Trigger]
+Type = Package
+Operation = Install
+Operation = Upgrade
+Target = linux
+Target = linux-lts
+Target = systemd
+Target = intel-ucode
+Target = amd-ucode
+
+[Action]
+Description = Rebuilding UKIs (dracut) into XBOOTLDR
+When = PostTransaction
+Exec = /usr/local/sbin/uki-dracut-build-all
+```
+
+Por que incluir `systemd`/`ucode`? Porque UKI costuma embutir stub/microcode; mudanças nesses pacotes devem regenerar os artefatos. (O systemd‑boot/UKI são sensíveis a atualizações do stub e microcode). [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Unified_kernel_image), [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Systemd-boot)
+
+### Abordagem B: deixar os hooks padrão gerarem initramfs e depois migrar (menos ideal)
+
+O pacote do dracut no Arch inclui hooks para gerar initramfs em upgrade de kernel.   
+Mas isso normalmente gera **initramfs solto** (não UKI), e você quer UKI. Então você acabaria com artefatos redundantes. [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Dracut)
+
+Quando você já estiver 100% em UKI, vale lembrar:
+
+*   o ArchWiki do dracut menciona formas de evitar imagens não usadas e até como “parar” hooks que geram initramfs redundantes, e também como desativar hooks do mkinitcpio (via symlink para `/dev/null`). [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Dracut)
+
+***
+
+## 6) Conclusão: sua estratégia “GRUB como fallback + UKI no XBOOTLDR + systemd‑boot para testes” é boa
+
+✅ **Funciona**, desde que você cuide de:
+
+*   XBOOTLDR no mesmo disco do ESP (requisito) [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/), [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Systemd-boot)
+*   firmware não ignorar XBOOTLDR (desativar fast boot se necessário) [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Systemd-boot)
+*   UKIs em `/EFI/Linux/*.efi` com extensão `.efi` [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Systemd-boot), [\[man7.org\]](https://www.man7.org/linux//man-pages/man7/sd-boot.7.html)
+*   cmdline embutida corretamente via `kernel_cmdline=` no dracut [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Dracut)
+*   entender que `bootctl install` sobrescreve o fallback loader `EFI/BOOT/BOOTX64.EFI` [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Systemd-boot)
+
+***
+
+## Próximo passo (pra eu te dar um “procedimento fechado” sem chute)
+
+Me manda o output de:
+
+```bash
+lsblk -f
+findmnt -no SOURCE /
+cat /etc/fstab
+```
+
+Com isso eu te devolvo:
+
+*   a `kernel_cmdline=` **exata** para o seu root em LVM+XFS
+*   os arquivos `/etc/dracut.conf.d/*.conf` prontos
+*   e o hook de pacman ajustado (linux vs linux-lts, ucode que você usa, etc.)
+
+Se você usa Intel ou AMD (microcode), me diga também qual.
