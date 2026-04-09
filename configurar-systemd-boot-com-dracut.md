@@ -743,3 +743,186 @@ Com isso eu te devolvo:
 *   e o hook de pacman ajustado (linux vs linux-lts, ucode que você usa, etc.)
 
 Se você usa Intel ou AMD (microcode), me diga também qual.
+
+**Prompt [Para o kernel_cmdline posso usar o conteúdo de... | Experimente no Copilot Chat](https://m365.cloud.microsoft/chat/entity1-d870f6cd-4aa5-4d42-9626-ab690c041429/eyJpZCI6IlZYTmxjbFl4ZkdoMGRIQnpPaTh2YzNWaWMzUnlZWFJsTFdsdWRDNXZabVpwWTJVdVkyOXRMM3hQU1VRNk5URXpObVkyWWpJdE1HWTVOUzAwWkRVM0xXRmtZVEV0T0dVeE1UZzNaVE01TkRnNWZHRTFOamhrTXpkbUxUa3daak10TkRBd1pDMDVNVFU1TFRka05tSmlZVE15WlRFM1pYd3lNREkyTFRBMExUQTVWREU0T2pRd09qVTNMakk1TURjNU5ERmEiLCJzY2VuYXJpbyI6InNoYXJlTGlua1ZpYVJpY2hDb3B5IiwicHJvcGVydGllcyI6eyJwcm9tcHRTb3VyY2UiOiJ1c2VyIiwiY2xpY2tUaW1lc3RhbXAiOiIyMDI2LTA0LTA5VDE4OjQwOjU3LjM2M1oifSwiY2hhdFR5cGUiOiJ3ZWIiLCJ2ZXJzaW9uIjoxLjF9)**
+
+```
+Para o kernel_cmdline posso usar o conteúdo de /proc/cmdline, certo?
+Ex:
+Se /proc/cmdline for...
+
+	BOOT_IMAGE=(hd0,msdos1)/vmlinuz-4.18.0-553.85.1.el8_10.x86_64 root=/dev/mapper/vg_root-root ro nofb splash=quiet crashkernel=auto rd.lvm.lv=vg_root/root rd.lvm.lv=vg_root/swap rhgb quiet audit=1 audit_backlog_limit=8192
+
+...uso o trecho...
+
+	root=/dev/mapper/vg_root-root ro nofb splash=quiet crashkernel=auto rd.lvm.lv=vg_root/root rd.lvm.lv=vg_root/swap rhgb quiet audit=1 audit_backlog_limit=8192
+
+...no kernel_cmdline, certo?
+
+Isso é só um exemplo que eu peguei de uma máquina Red Hat arbitrária que eu tenho acesso.
+O cmdline da minha máquina Arch eu só vou saber quando chegar em casa.
+
+Uso os kernels linux e linux-zen.
+Depois de criar a partição XBOOTLDR com mais espaço devo instalar o linux-lts e talvez eu habilite o fallback.
+Minha máquina é Intel, um Dell XPS 8960.
+O que é nano? (Contém ironia :)! Uso vim ou neovim.)
+```
+
+**Resposta**
+Sim — **usar o conteúdo de `/proc/cmdline` como base para o `kernel_cmdline=` é exatamente o caminho mais seguro** (porque reflete o que está funcionando hoje). A única cautela é **remover/ajustar alguns campos** que fazem sentido apenas no contexto do GRUB (ou de outra distro) e **garantir que o parâmetro `root=` continue correto**. [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/), [\[systemd.io\]](https://systemd.io/BOOT/)
+
+Abaixo deixo um guia bem prático (e “vim-friendly” 😄).
+
+***
+
+## 1) Posso usar o `/proc/cmdline`? Sim, mas com “higienização”
+
+O que você sugeriu está correto: **você não deve colocar `BOOT_IMAGE=...`** no `kernel_cmdline`, porque isso é “metadado” do bootloader (GRUB) e não precisa (nem ajuda) quando você vai bootar via UKI/systemd-stub. [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/)
+
+### Exemplo que você deu (RHEL)
+
+`/proc/cmdline`:
+
+    BOOT_IMAGE=(hd0,msdos1)/vmlinuz-4.18.0-553.85.1.el8_10.x86_64 root=/dev/mapper/vg_root-root ro nofb splash=quiet crashkernel=auto rd.lvm.lv=vg_root/root rd.lvm.lv=vg_root/swap rhgb quiet audit=1 audit_backlog_limit=8192
+
+Para `kernel_cmdline`, você pegaria **basicamente tudo menos o `BOOT_IMAGE=...`**, então seu “trecho” está no caminho certo:
+
+    root=/dev/mapper/vg_root-root ro nofb splash=quiet crashkernel=auto rd.lvm.lv=vg_root/root rd.lvm.lv=vg_root/swap rhgb quiet audit=1 audit_backlog_limit=8192
+
+✅ **Isso funciona como base.** [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/)
+
+***
+
+## 2) O que eu recomendo ajustar (especialmente ao sair do GRUB/RHEL → UKI/Arch)
+
+Pense em três categorias:
+
+### (A) **Remover quase sempre**
+
+*   `BOOT_IMAGE=...` (sempre remover) [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/)
+*   Qualquer `initrd=...` (não apareceu no seu exemplo, mas às vezes aparece) — em UKI o initramfs está embutido; `initrd=` passado na cmdline não é desejável. [\[systemd.io\]](https://systemd.io/BOOT/)
+
+### (B) **Manter (importante para boot)**
+
+*   `root=...` ✅ (essencial)
+*   Para **LVM**: `rd.lvm.lv=VG/LV` costuma ser útil para garantir descoberta precoce do LV no initramfs (especialmente em setups que dependem do initramfs “entender” LVM). Você usa LVM no root, então **tende a ser uma boa manter**. [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/)
+*   `rootfstype=xfs` (opcional, mas OK; às vezes acelera/evita autodetecção errada)
+
+### (C) **Manter se você realmente quer o comportamento**
+
+*   `ro` vs `rw`: muitas distros bootam `ro` e depois o systemd remonta `rw`. Tanto faz na maioria dos casos; se você quer “igual ao atual”, mantenha `ro`.
+*   `quiet`, `loglevel=`, `audit=`, `audit_backlog_limit=`: comportamento/telemetria (mantém se você usa)
+*   `crashkernel=auto`: só se você usa kdump (no Arch normalmente não, mas pode)
+*   `rhgb` / `splash=quiet`: isso é bem “Red Hat-ish”. Em Arch geralmente é irrelevante, mas não costuma quebrar. Eu **não colocaria** por padrão num Arch “limpo”, mas se estava no `/proc/cmdline` do *seu* Arch e você gosta do comportamento, ok.
+
+> **Dica prática:** para o primeiro teste de UKI, use uma cmdline **mínima e previsível**, e só depois “recoloque perfumarias”.
+
+***
+
+## 3) Uma cmdline “mínima boa” para seu caso (LVM + XFS, sem LUKS)
+
+Algo nessa linha costuma ser suficiente:
+
+```text
+root=/dev/mapper/vg_root-root ro rootfstype=xfs rd.lvm.lv=vg_root/root
+```
+
+Se você tem swap em LV e usa resume/hibernação, aí sim entram coisas como `resume=` etc.
+
+E você pode acrescentar seus parâmetros de logging/audit:
+
+```text
+root=/dev/mapper/vg_root-root ro rootfstype=xfs rd.lvm.lv=vg_root/root rd.lvm.lv=vg_root/swap audit=1 audit_backlog_limit=8192 quiet
+```
+
+O ponto é: **sempre garanta `root=` correto** e **mantenha `rd.lvm.lv=` ao menos para o root** quando o root é LV. [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/)
+
+***
+
+## 4) Onde configurar isso no dracut (do jeito “certo”)
+
+No Arch, uma forma direta é criar um arquivo, por exemplo:
+
+`/etc/dracut.conf.d/cmdline.conf`
+
+com:
+
+```ini
+kernel_cmdline="root=/dev/mapper/vg_root-root ro rootfstype=xfs rd.lvm.lv=vg_root/root rd.lvm.lv=vg_root/swap quiet audit=1 audit_backlog_limit=8192"
+```
+
+O ArchWiki do dracut documenta exatamente esse mecanismo (`kernel_cmdline=` em `.conf`). [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/)
+
+**Vim edition™**:
+
+```bash
+sudoedit /etc/dracut.conf.d/cmdline.conf
+```
+
+***
+
+## 5) Observação importantíssima: UKI + systemd-boot e “override” de cmdline
+
+Quando você embute a `.cmdline` dentro do UKI:
+
+*   **Sem Secure Boot**: o systemd-boot pode passar opções e **elas podem sobrescrever** a `.cmdline` embutida. [\[wiki.gentoo.org\]](https://wiki.gentoo.org/wiki/Unified_Kernel_Image), [\[systemd.io\]](https://systemd.io/BOOT/)
+*   **Com Secure Boot ativo**: UKIs com `.cmdline` embutida **ignoram** opções passadas pelo bootloader (por segurança). [\[wiki.gentoo.org\]](https://wiki.gentoo.org/wiki/Unified_Kernel_Image), [\[systemd.io\]](https://systemd.io/BOOT/)
+
+Como você quer **não depender de `/loader/entries`** e pretende bootar “auto-discovery”, embutir uma cmdline correta no UKI é o que torna o boot “self-contained”. [\[systemd.io\]](https://systemd.io/BOOT/), [\[kernel.org\]](https://www.kernel.org/pub/linux/utils/boot/dracut/dracut.html)
+
+***
+
+## 6) Seu cenário de kernels (linux, linux-zen, talvez linux-lts) — o que muda na prática
+
+Nada “conceitual”: você vai acabar gerando **um UKI por versão de kernel instalada**.
+
+O systemd‑boot **auto-detecta UKIs** em `/EFI/Linux/*.efi` tanto no **ESP** quanto no **XBOOTLDR** (mesmo disco). [\[kernel.org\]](https://www.kernel.org/pub/linux/utils/boot/dracut/dracut.html), [\[wiki.gentoo.org\]](https://wiki.gentoo.org/wiki/Unified_Kernel_Image), [\[systemd.io\]](https://systemd.io/BOOT/)
+
+Então uma estratégia simples é nomear assim:
+
+*   `/EFI/Linux/arch-linux-<kver>.efi`
+*   `/EFI/Linux/arch-zen-<kver>.efi`
+*   `/EFI/Linux/arch-lts-<kver>.efi`
+
+Não existe obrigação do nome, mas **claridade ajuda**.
+
+> **Sobre “fallback”:** com dracut “normal”, o fallback (no sentido mkinitcpio) não é tão necessário em muitos setups, mas você pode manter um UKI “rescue”/“fallback” se quiser. (Podemos montar isso depois que você tiver o `/proc/cmdline` real da sua máquina.)
+
+***
+
+## 7) (Extra) Como extrair seu `/proc/cmdline` e “limpar” automaticamente
+
+Quando você estiver em casa, você pode pegar e remover o BOOT\_IMAGE com um one-liner:
+
+```bash
+cmdline="$(</proc/cmdline)"
+clean="$(printf '%s\n' "$cmdline" | sed -E 's/(^| )BOOT_IMAGE=[^ ]+//g; s/^ +| +$//g')"
+printf '%s\n' "$clean"
+```
+
+Aí você revisa e cola em `kernel_cmdline="..."`.
+
+***
+
+## 8) Humor obrigatório: “O que é nano?” 😄
+
+Nano é aquele editor que aparece quando você erra algum alias e o universo te pune. Brincadeira.  
+Vamos de `vim`/`nvim` sem culpa. 😉
+
+***
+
+## Próximo passo (pra eu te fechar um procedimento 100% exato)
+
+Quando você estiver com sua máquina Arch, me mande:
+
+```bash
+cat /proc/cmdline
+lsblk -f
+```
+
+Com isso eu te devolvo:
+
+*   `kernel_cmdline=` **exato** (incluindo `root=` correto do seu LV)
+*   exemplo de comando para gerar **UKI para linux + linux-zen + linux-lts**
+*   e o **hook do pacman** para rebuild automático de UKI (incluindo `intel-ucode` e `systemd` como triggers), alinhado com sua estratégia de coexistência GRUB → systemd‑boot. [\[uapi-group.org\]](https://uapi-group.org/specifications/specs/boot_loader_specification/), [\[wiki.gentoo.org\]](https://wiki.gentoo.org/wiki/Unified_Kernel_Image), [\[systemd.io\]](https://systemd.io/BOOT/)
+
