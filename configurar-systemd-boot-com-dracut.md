@@ -1009,4 +1009,75 @@ Você deve ver referências ao microcode (Intel) dentro da imagem se o pacote es
 
 Se você quiser, eu monto um “modelo final” já considerando seus kernels **linux**, **linux-zen** e (futuro) **linux-lts**, com nomes consistentes e um hook do pacman para rebuild automático — e sem nano, prometo 😄.
 
+**Prompt [Depois que perguntei vi que você já tinha... | Experimente no Copilot Chat](https://m365.cloud.microsoft/chat/entity1-d870f6cd-4aa5-4d42-9626-ab690c041429/eyJpZCI6IlZYTmxjbFl4ZkdoMGRIQnpPaTh2YzNWaWMzUnlZWFJsTFdsdWRDNXZabVpwWTJVdVkyOXRMM3hQU1VRNk5URXpObVkyWWpJdE1HWTVOUzAwWkRVM0xXRmtZVEV0T0dVeE1UZzNaVE01TkRnNWZEQTVOakl6WkdFM0xXUTJOV1F0TkdKbVpTMWlNekprTFRaaFpETmhPR0kxTm1NeE1ud3lNREkyTFRBMExUQTVWREU1T2pBd09qTXlMalUwTURnMk5qVmEiLCJzY2VuYXJpbyI6InNoYXJlTGlua1ZpYVJpY2hDb3B5IiwicHJvcGVydGllcyI6eyJwcm9tcHRTb3VyY2UiOiJ1c2VyIiwiY2xpY2tUaW1lc3RhbXAiOiIyMDI2LTA0LTA5VDE5OjAwOjMyLjY0NloifSwiY2hhdFR5cGUiOiJ3ZWIiLCJ2ZXJzaW9uIjoxLjF9)**
+Depois que perguntei vi que você já tinha mencionado isso em "6. Incluir microcode no UKI" usando a opção "early_microcode=yes" no arquivo "/etc/dracut.conf.d/microcode.conf".
+**Resposta**
+Boa — você percebeu exatamente o ponto. E vale uma **correção/clareza** importante:
+
+## ✅ Microcode no dracut: “automático” vs `early_microcode=yes`
+
+### 1) **O dracut *já* embute microcode automaticamente (se estiver instalado)**
+
+No Arch, o próprio ArchWiki do dracut afirma que as imagens geradas **“embed any installed Microcode images”** — ou seja, se você tem `intel-ucode` instalado, ele entra no artefato gerado (initramfs ou UKI) sem você precisar apontar manualmente o arquivo de microcode. [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Dracut)
+
+### 2) O que `early_microcode=yes` realmente faz?
+
+A opção `early_microcode=` controla **como** esse microcode é colocado no artefato: ela “combina o early microcode com o ramdisk”. [\[man.archlinux.org\]](https://man.archlinux.org/man/dracut.conf.5.en)
+
+E aqui está o detalhe que resolve sua dúvida:
+
+*   `early_microcode=` tem **default = `yes`** no dracut.   
+    Então, **na maioria dos casos você não precisa setar nada**: já estará habilitado. [\[man.archlinux.org\]](https://man.archlinux.org/man/dracut.conf.5.en)
+
+👉 Portanto, o arquivo `/etc/dracut.conf.d/microcode.conf` com:
+
+```ini
+early_microcode="yes"
+```
+
+é mais uma forma de **tornar explícito** (e “blindar” contra mudanças futuras) do que uma exigência para funcionar. [\[man.archlinux.org\]](https://man.archlinux.org/man/dracut.conf.5.en), [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Dracut)
+
+***
+
+## ✅ Em UKI `.efi`, o cenário é o mesmo?
+
+Sim. Quando você gera **UKI**, o dracut cria um **executável UEFI** (com kernel + initramfs + cmdline “colados” via stub), e o microcode entra junto conforme as regras acima. O `dracut.conf(5)` descreve o modo `uefi=` como “em vez de initramfs, cria um executável UEFI” e também lista o `uefi_stub` como o carregador que “carrega o kernel, initramfs e cmdline e boota o kernel”. [\[man.archlinux.org\]](https://man.archlinux.org/man/dracut.conf.5.en)
+
+Ou seja:
+
+*   Se você gerar o UKI via `--uefi`/`uefi=yes`, e o `intel-ucode` estiver instalado, **ele tende a ser embutido** (e, por padrão, como “early microcode”). [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Dracut), [\[man.archlinux.org\]](https://man.archlinux.org/man/dracut.conf.5.en)
+
+***
+
+## ✅ Então eu preciso informar microcode na linha de comando?
+
+**Normalmente não.** (Essa é a resposta curta.)
+
+Você só precisaria “mexer” nisso se:
+
+*   você **desabilitou** `early_microcode` em algum lugar (ou está usando uma config que desabilita), ou [\[man.archlinux.org\]](https://man.archlinux.org/man/dracut.conf.5.en)
+*   você está tentando um fluxo alternativo que usa microcode **externo** (tipo `initrd` separado via bootloader — que não é seu caso com UKI). [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Dracut), [\[man.archlinux.org\]](https://man.archlinux.org/man/dracut.conf.5.en)
+
+***
+
+## 🔍 Como confirmar na prática (sem adivinhação)
+
+Depois de gerar o UKI, inspecione com `lsinitrd` (recomendado no ArchWiki do dracut): [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Dracut)
+
+```bash
+sudo lsinitrd /boot/EFI/Linux/arch-linux-$(uname -r).efi | grep -i microcode
+```
+
+Se aparecerem referências a microcode, está embutido.
+
+***
+
+## Minha recomendação prática (para seu runbook)
+
+*   **Deixe como padrão** (sem `microcode.conf`) **ou** deixe explícito com `early_microcode="yes"` — ambos funcionam. [\[man.archlinux.org\]](https://man.archlinux.org/man/dracut.conf.5.en), [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Dracut)
+*   O que **não** dá para esquecer é: UKI exige o modo `uefi` (via `--uefi` ou `uefi=yes`) e uma saída `.efi`. [\[man.archlinux.org\]](https://man.archlinux.org/man/dracut.conf.5.en), [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Dracut)
+
+Se quiser, eu te passo um conjunto minimalista de `/etc/dracut.conf.d/*.conf` para seu caso (Intel + LVM + XFS + linux/linux-zen/linux-lts) com nomes padronizados e hook do pacman — no estilo “copiar e colar” (sem nano, prometo 😄).
+
+
 
