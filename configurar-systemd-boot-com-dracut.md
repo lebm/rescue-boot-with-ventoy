@@ -1084,4 +1084,268 @@ Se aparecerem referências a microcode, está embutido.
 Se quiser, eu te passo um conjunto minimalista de `/etc/dracut.conf.d/*.conf` para seu caso (Intel + LVM + XFS + linux/linux-zen/linux-lts) com nomes padronizados e hook do pacman — no estilo “copiar e colar” (sem nano, prometo 😄).
 
 
+**Prompt [Sim, pode me passar então esse conjunto mínimo... | Experimente no Copilot Chat](https://m365.cloud.microsoft/chat/entity1-d870f6cd-4aa5-4d42-9626-ab690c041429/eyJpZCI6IlZYTmxjbFl4ZkdoMGRIQnpPaTh2YzNWaWMzUnlZWFJsTFdsdWRDNXZabVpwWTJVdVkyOXRMM3hQU1VRNk5URXpObVkyWWpJdE1HWTVOUzAwWkRVM0xXRmtZVEV0T0dVeE1UZzNaVE01TkRnNWZHTTBNR1V6WTJOaUxUZGlaV1l0TkRJelpDMWlaVEptTFRZellXSXdOVFJqTmpRNU1Id3lNREkyTFRBMExUQTVWREU1T2pBM09qUXhMams0TURnNU5qbGEiLCJzY2VuYXJpbyI6InNoYXJlTGlua1ZpYVJpY2hDb3B5IiwicHJvcGVydGllcyI6eyJwcm9tcHRTb3VyY2UiOiJ1c2VyIiwiY2xpY2tUaW1lc3RhbXAiOiIyMDI2LTA0LTA5VDE5OjA3OjQyLjE2OVoifSwiY2hhdFR5cGUiOiJ3ZWIiLCJ2ZXJzaW9uIjoxLjF9)**
+```
+Sim, pode me passar então esse conjunto mínimo conforme você sugeriu.
+```
+**Resposta**
+Perfeito — abaixo vai um **conjunto mínimo** (e bem “pé‑no‑chão”) para você gerar **UKIs com dracut** e bootar via **systemd‑boot**, mantendo o processo simples e auditável.
+
+> **Princípios deste “mínimo”:**
+>
+> 1.  dracut gera UKI quando você usa `--uefi` **ou** `uefi=yes` na config. [\[github.com\]](https://github.com/uapi-group/specifications/blob/main/specs/boot_loader_specification.md), [\[man7.org\]](https://www.man7.org/linux/man-pages/man8/dracut.8.html)
+> 2.  O UKI é um `.efi` em `/EFI/Linux/` e o systemd‑boot **auto-detecta** sem precisar de `/loader/entries`. [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Dracut), [\[dracut-ng.github.io\]](https://dracut-ng.github.io/dracut-ng/man/dracut.conf.5.html), [\[wiki.debian.org\]](https://wiki.debian.org/UKI)
+> 3.  Microcode Intel é embutido quando instalado; e `early_microcode` por padrão já é `yes`, então só vamos deixar explícito. [\[github.com\]](https://github.com/uapi-group/specifications/blob/main/specs/boot_loader_specification.md), [\[man7.org\]](https://www.man7.org/linux/man-pages/man8/dracut.8.html)
+
+***
+
+# 0) Pré‑requisitos (pacotes)
+
+```bash
+sudo pacman -S dracut intel-ucode
+```
+
+*   O pacote `intel-ucode` é o que fornece o microcode para CPUs Intel. [\[github.com\]](https://github.com/uapi-group/specifications/blob/main/specs/boot_loader_specification.md)
+*   `dracut` é o gerador do initramfs/UKI que vamos usar. [\[github.com\]](https://github.com/uapi-group/specifications/blob/main/specs/boot_loader_specification.md)
+
+***
+
+# 1) Diretório de configuração do dracut
+
+O dracut lê drop-ins em `/etc/dracut.conf.d/*.conf`. [\[man7.org\]](https://www.man7.org/linux/man-pages/man8/dracut.8.html)
+
+```bash
+sudo mkdir -p /etc/dracut.conf.d
+```
+
+***
+
+# 2) Conjunto mínimo de `/etc/dracut.conf.d/*.conf`
+
+## 2.1 `50-uki.conf` — habilita UKI/UEFI e aponta o stub do systemd
+
+Crie:
+
+```bash
+sudoedit /etc/dracut.conf.d/50-uki.conf
+```
+
+Conteúdo:
+
+```ini
+# Gera um executável UEFI (UKI) em vez de initramfs "solto"
+uefi="yes"
+
+# Stub loader do systemd (carrega kernel + initramfs + cmdline)
+uefi_stub="/usr/lib/systemd/boot/efi/linuxx64.efi.stub"
+```
+
+*   `uefi=yes` faz o dracut criar um **executável UEFI** em vez de initramfs, com filename padrão no formato `/EFI/Linux/linux-...efi` (se você não especificar saída). [\[man7.org\]](https://www.man7.org/linux/man-pages/man8/dracut.8.html)
+*   `uefi_stub` define o stub loader que “carrega kernel, initramfs e cmdline e boota o kernel”. [\[man7.org\]](https://www.man7.org/linux/man-pages/man8/dracut.8.html)
+
+## 2.2 `50-cmdline.conf` — embute sua cmdline “boa” no UKI
+
+Crie:
+
+```bash
+sudoedit /etc/dracut.conf.d/50-cmdline.conf
+```
+
+Conteúdo (AJUSTE para seu root LV e preferências):
+
+```ini
+# Cmdline embutida no UKI (coloque aqui a versão "higienizada" do /proc/cmdline)
+kernel_cmdline="root=/dev/mapper/SEU_VG-SEU_LV ro rootfstype=xfs rd.lvm.lv=SEU_VG/SEU_LV quiet"
+```
+
+*   `kernel_cmdline` define os parâmetros padrão de cmdline (o próprio `dracut.conf(5)` deixa claro o uso desse campo). [\[man7.org\]](https://www.man7.org/linux/man-pages/man8/dracut.8.html)
+*   Para root em LVM, manter `rd.lvm.lv=VG/LV` costuma ajudar a descoberta do LV no early boot (especialmente quando você quer reproduzir comportamento estável). [\[github.com\]](https://github.com/uapi-group/specifications/blob/main/specs/boot_loader_specification.md)
+
+> **Quando você estiver em casa:** você pode começar copiando o `/proc/cmdline` atual e remover apenas `BOOT_IMAGE=...` para montar esse `kernel_cmdline`, como você já propôs. (E depois você refina.)
+
+## 2.3 `50-microcode.conf` — torna explícito o microcode “early”
+
+Crie:
+
+```bash
+sudoedit /etc/dracut.conf.d/50-microcode.conf
+```
+
+Conteúdo:
+
+```ini
+# Combina o early microcode com o ramdisk (default já é yes; aqui é só explícito)
+early_microcode="yes"
+```
+
+*   `early_microcode` existe e o default é `yes` (“Combine early microcode with ramdisk (default=yes)”). [\[man7.org\]](https://www.man7.org/linux/man-pages/man8/dracut.8.html)
+*   No ArchWiki do dracut: as imagens geradas “embed any installed Microcode images”. Ou seja, **se `intel-ucode` estiver instalado, ele será embutido**. [\[github.com\]](https://github.com/uapi-group/specifications/blob/main/specs/boot_loader_specification.md)
+
+## 2.4 (Opcional, mas útil) `50-hostonly.conf` — deixa explícito que é imagem “hostonly”
+
+O default já é hostonly=yes, mas eu gosto de deixar isso explícito em migração (menos surpresas).
+
+Crie:
+
+```bash
+sudoedit /etc/dracut.conf.d/50-hostonly.conf
+```
+
+Conteúdo:
+
+```ini
+hostonly="yes"
+```
+
+*   `hostonly` está documentado e o default no dracut.conf é `yes`. [\[man7.org\]](https://www.man7.org/linux/man-pages/man8/dracut.8.html)
+
+***
+
+# 3) Gerar UKI manualmente (teste) no local certo: `/boot/EFI/Linux/*.efi`
+
+**Importante:** para realmente sair um `.efi`, use `--uefi` e forneça um caminho de saída `.efi` (isso elimina ambiguidade). [\[github.com\]](https://github.com/uapi-group/specifications/blob/main/specs/boot_loader_specification.md), [\[man7.org\]](https://www.man7.org/linux/man-pages/man8/dracut.8.html)
+
+Crie o diretório:
+
+```bash
+sudo mkdir -p /boot/EFI/Linux
+```
+
+Gere para o kernel corrente:
+
+```bash
+kver="$(uname -r)"
+sudo dracut --force --uefi "/boot/EFI/Linux/arch-${kver}.efi" "${kver}"
+```
+
+*   `--force` sobrescreve a imagem existente. [\[linuxconfig.org\]](https://linuxconfig.org/how-to-configure-dracut-initramfs-on-ubuntu-26-04)
+*   `--uefi` (ou `uefi=yes`) manda o dracut produzir um executável UEFI/UKI. [\[github.com\]](https://github.com/uapi-group/specifications/blob/main/specs/boot_loader_specification.md), [\[man7.org\]](https://www.man7.org/linux/man-pages/man8/dracut.8.html)
+
+### Verificar se o microcode entrou
+
+Use `lsinitrd` para inspecionar o que foi embutido (recomendado no ArchWiki do dracut). [\[github.com\]](https://github.com/uapi-group/specifications/blob/main/specs/boot_loader_specification.md)
+
+```bash
+sudo lsinitrd "/boot/EFI/Linux/arch-${kver}.efi" | grep -i microcode
+```
+
+***
+
+# 4) systemd‑boot: por que você não precisa de `/loader/entries` (para UKI)
+
+O systemd‑boot **auto-detecta UKIs** (BLS Type #2) que estejam em `/EFI/Linux/` no **ESP e no XBOOTLDR** (no mesmo disco), e não exige `.conf` em `/loader/entries`. [\[dracut-ng.github.io\]](https://dracut-ng.github.io/dracut-ng/man/dracut.conf.5.html), [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Dracut), [\[wiki.debian.org\]](https://wiki.debian.org/UKI)
+
+***
+
+# 5) Automação: gerar UKIs automaticamente em upgrades (linux, linux-zen, linux-lts, intel-ucode, systemd)
+
+A ideia aqui é simples e robusta:
+
+*   um script que gera UKIs para todos os kernels presentes em `/usr/lib/modules/*`
+*   um pacman hook que chama esse script após transações relevantes
+
+## 5.1 Script: `/usr/local/sbin/uki-dracut-rebuild`
+
+Crie:
+
+```bash
+sudo install -d /usr/local/sbin
+sudoedit /usr/local/sbin/uki-dracut-rebuild
+```
+
+Conteúdo:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Ajuste se você estiver usando um mountpoint temporário tipo /xbootldr durante testes
+BOOT_MNT="${BOOT_MNT:-/boot}"
+OUTDIR="${BOOT_MNT}/EFI/Linux"
+
+# Só segue se o mountpoint estiver montado (evita gerar no lugar errado)
+if ! findmnt -rno TARGET "${BOOT_MNT}" >/dev/null 2>&1; then
+  echo "ERRO: ${BOOT_MNT} não está montado. Abortando rebuild de UKI." >&2
+  exit 1
+fi
+
+mkdir -p "${OUTDIR}"
+
+for d in /usr/lib/modules/*; do
+  kver="$(basename "$d")"
+  out="${OUTDIR}/arch-${kver}.efi"
+  echo ">> Gerando UKI: ${out}"
+  dracut --force --uefi "${out}" "${kver}"
+done
+```
+
+Permissão:
+
+```bash
+sudo chmod +x /usr/local/sbin/uki-dracut-rebuild
+```
+
+*   O `dracut` permite escolher a versão do kernel pelo argumento `<kernel version>` e sobrescrever com `--force`. [\[linuxconfig.org\]](https://linuxconfig.org/how-to-configure-dracut-initramfs-on-ubuntu-26-04)
+*   `--uefi` gera UKI/UEFI executável. [\[github.com\]](https://github.com/uapi-group/specifications/blob/main/specs/boot_loader_specification.md), [\[man7.org\]](https://www.man7.org/linux/man-pages/man8/dracut.8.html)
+
+## 5.2 Hook do pacman: `/etc/pacman.d/hooks/95-uki-dracut.hook`
+
+Crie:
+
+```bash
+sudo install -d /etc/pacman.d/hooks
+sudoedit /etc/pacman.d/hooks/95-uki-dracut.hook
+```
+
+Conteúdo:
+
+```ini
+[Trigger]
+Type = Package
+Operation = Install
+Operation = Upgrade
+Target = linux
+Target = linux-zen
+Target = linux-lts
+Target = intel-ucode
+Target = systemd
+
+[Action]
+Description = Rebuilding UKIs (dracut) into /boot/EFI/Linux
+When = PostTransaction
+Exec = /usr/local/sbin/uki-dracut-rebuild
+```
+
+Por que esses Targets?
+
+*   Atualização de kernel obviamente pede rebuild. [\[github.com\]](https://github.com/uapi-group/specifications/blob/main/specs/boot_loader_specification.md)
+*   Atualização de microcode deve refletir no UKI (você quer o microcode embutido). [\[github.com\]](https://github.com/uapi-group/specifications/blob/main/specs/boot_loader_specification.md), [\[man7.org\]](https://www.man7.org/linux/man-pages/man8/dracut.8.html)
+*   `systemd` contém o stub (`linuxx64.efi.stub`) e atualizar isso pode justificar rebuild/retomar consistência. [\[man7.org\]](https://www.man7.org/linux/man-pages/man8/dracut.8.html), [\[wiki.archlinux.org\]](https://wiki.archlinux.org/title/Dracut)
+
+***
+
+# 6) Quando você migrar de vez (remover mkinitcpio/grub)
+
+Depois que estiver 100% no systemd‑boot + UKI, você pode:
+
+*   parar de gerar initramfs “solto” desnecessário (economiza espaço)
+*   desabilitar hooks do mkinitcpio (muita gente faz symlink para `/dev/null`)
+
+O ArchWiki do dracut comenta justamente esse tipo de ajuste para evitar imagens redundantes e desativar hooks do mkinitcpio quando não forem mais necessários. [\[systemd.io\]](https://systemd.io/BOOT/)
+
+***
+
+# 7) O que você só precisa preencher (quando estiver em casa)
+
+1.  **Seu root LV real** (para `root=/dev/mapper/...` e `rd.lvm.lv=...`)
+2.  Os parâmetros finais que você quer (quiet/audit/loglevel etc), baseados no seu `/proc/cmdline` atual.
+
+Quando você tiver, me mande:
+
+```bash
+cat /proc/cmdline
+lvs -o vg_name,lv_name,lv_path
+```
+
+Aí eu te devolvo o `kernel_cmdline="..."` **pronto e sem gordura**, e se quiser eu ajusto o script para nomear UKIs com “linux/zen/lts” no nome (embora o `kver` normalmente já denuncie isso).
 
